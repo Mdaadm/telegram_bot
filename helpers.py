@@ -28,7 +28,6 @@ fb_bot = Bot(config.fb_access_token)
 
 # Google sheets authorization
 gc = gspread.service_account(filename=config.cred_final)
-acc = gc.open_by_key(config.sheets_clients_token).worksheet('v2clients')
 
 
 def send_msg_to_tg(message_data):
