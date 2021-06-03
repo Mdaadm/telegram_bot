@@ -10,7 +10,7 @@ import random
 import os
 import sqlite3 as sql
 from helpers import get_info, open_dialogue, update_clients, db_find_value, delete_client, log_report, new_client, \
-                    info_soon_check, client_info_msg, close_dialogue, bot, vk, fb_bot, autopay
+                    info_soon_check, client_info_msg, close_dialogue, bot, vk, fb_bot, autopay, get_tariffs
 
 
 # Temp data for mailing and DB editing commands
@@ -34,13 +34,10 @@ def tg_to_tg(to_id, message, from_support=False, review=False):
         # Bottom part of the message with id and social network name, so we can reply back
         check = "\U00002705" if get_info("verified", "tg_id", message.chat.id) else ''
         bottom = f"{message.chat.id} Telegram{check}"
-
         text = header + text + "\n\n"
-
         # Add client tariff info
         if not info_soon_check(message.chat.id, 'tg_id'):
             text += "\n" + client_info_msg("tg_id", message.chat.id)
-
         text += bottom
 
     if message.text:
@@ -56,7 +53,6 @@ def tg_to_tg(to_id, message, from_support=False, review=False):
         bot.send_document(to_id, message.document.file_id, caption=text)
     if message.voice:
         bot.send_voice(to_id, message.voice.file_id)
-
         # Voice message has no caption, so send empty text message with top+bottom borders to be able to reply
         # Same for audio and stickers
         if not from_support:
@@ -64,15 +60,22 @@ def tg_to_tg(to_id, message, from_support=False, review=False):
 
     if message.audio:
         bot.send_audio(to_id, message.audio.file_id)
-
         if not from_support:
             bot.send_message(to_id, text)
 
     if message.sticker:
         bot.send_sticker(to_id, message.sticker.file_id)
-
         if not from_support:
             bot.send_message(to_id, text)
+
+
+# --------------------------------------------------
+def copy_send_message(to_chat_id, from_chat_id, message_id):
+    """ Copy and send telegram message """
+
+    url = f'https://api.telegram.org/bot{config.tg_token}/copyMessage'
+    requests.post(url, json={"chat_id": f"{to_chat_id}", "from_chat_id": f"{from_chat_id}",
+                             "message_id": f"{message_id}"})
 
 
 # --------------------------------------------------
@@ -105,7 +108,6 @@ def photo_tg_to_vk(user_id, path, message):
     upload = requests.post(server['upload_url'], files={'photo': open(path, 'rb')}).json()
     save = vk.photos.saveMessagesPhoto(photo=upload['photo'], server=upload['server'], hash=upload['hash'])[0]
     att = f"photo{save['owner_id']}_{save['id']}"
-
     vk.messages.send(user_id=int(user_id), random_id=random.randint(1, 2147483647), message=message,
                      attachment=att)
 
@@ -119,7 +121,6 @@ def doc_tg_to_vk(user_id, path, message):
     upload = requests.post(server['upload_url'], files={'file': open(path, 'rb')}).json()
     save = vk.docs.save(file=upload['file'])
     att = f"doc{save['doc']['owner_id']}_{save['doc']['id']}"
-
     vk.messages.send(user_id=user_id, random_id=random.randint(1, 2147483647), message=message, attachment=att)
 
 
@@ -166,17 +167,15 @@ def spam(tariffs_list, text, sender, VK_only=False, TG_only=False):
 
     for client in clients_list:
         sent = False
-        if not VK_only and client[0] != "0":
-            url = f'https://api.telegram.org/bot{config.tg_token}/copyMessage'
-            requests.post(url, json={"chat_id": f"{client[0]}", "from_chat_id": f"{sender}",
-                                     "message_id": f"{temp['message_id']}"})
+        tg_id, vk_id, fb_id = client[:3]
+        if not VK_only and tg_id != "0":
+            copy_send_message(tg_id, sender, temp['message_id'])
             sent = True
-            # bot.send_message(int(client[0]), text, parse_mode='Markdown')  # Temporarily off
-        if not TG_only and client[1] != "0":
-            vk.messages.send(user_id=int(client[1]), random_id=random.randint(0, 2147483646), message=text)
+        if not TG_only and vk_id != "0":
+            vk.messages.send(user_id=int(vk_id), random_id=random.randint(0, 2147483646), message=text)
             sent = True
-        # elif client[2] != "0":
-        # fb_bot.send_text_message(client[2], text)  # Temporarily off
+        # elif fb_id != "0":
+        # fb_bot.send_text_message(fb_id, text)  # Temporarily off
 
         # Delay to prevent api errors
         if sent:
@@ -224,13 +223,13 @@ def check_mailing(message):
         return False
 
     reply_text = message.reply_to_message.text
-
     # Check if reply message sender is bot
     bot_check = message.reply_to_message.from_user.id == config.bot_id
 
     # Check if reply message text is special text that bot sends to owner
     text_check = reply_text in [messages.mailing_tariffs, messages.mailing_message] \
                  or reply_text.startswith("Следующие тарифы:")
+
     return user_check and bot_check and text_check
 
 
@@ -246,11 +245,9 @@ def support(message, urgent=False):
         if not 17 <= datetime.datetime.today().hour < 22 or datetime.datetime.today().isoweekday() in [6, 7]:
             buttons.add(types.InlineKeyboardButton(text="Срочная связь", callback_data="urgent"))
             bot.send_message(message.chat.id, messages.non_working, reply_markup=buttons)
-
             return
 
     open_dialogue("tg_id", message.chat.id)
-
     buttons = types.InlineKeyboardMarkup()
     buttons.add(types.InlineKeyboardButton(text="Первичная настройка", callback_data="install"))
     buttons.add(types.InlineKeyboardButton(text="Другое", callback_data="other"))
@@ -280,8 +277,14 @@ def initial_buttons(message, send_text=messages.buttons_menu):
     item_connection = types.InlineKeyboardButton("\U00002753 Связаться с поддержкой")
     markup_buttons.add(item_pay, item_trial, item_turk, item_promo,
                        item_shop, item_coop, item_connection)
-
     bot.send_message(message.chat.id, send_text, reply_markup=markup_buttons)
+
+
+@bot.message_handler(func=lambda message: message.chat.id == 197898957)
+def cow(message):
+    """ Korova """
+
+    bot.send_audio(message.chat.id, "CQACAgIAAxkBAALKP1-5Lbsw_SWny8UT3NIbArp_mlZcAAJPCAACqgABwUl8U_s6W_nHxB4E")
 
 
 @bot.message_handler(commands=["start"])
@@ -336,11 +339,9 @@ def pay(message):
     open_dialogue("tg_id", message.chat.id, state="PAY")
 
     buttons = types.InlineKeyboardMarkup()
-
     buttons.add(types.InlineKeyboardButton(text="В рублях ₽ или в гривнах ₴", callback_data="rub"))
     buttons.add(types.InlineKeyboardButton(text="В юанях ¥", callback_data="yuan"))
     buttons.add(types.InlineKeyboardButton(text="\U00002753 Связаться с поддержкой", callback_data="sup"))
-
     bot.send_message(message.chat.id, messages.pay_type, reply_markup=buttons)
 
 
@@ -350,10 +351,8 @@ def trial(message):
 
     time.sleep(1)
     buttons = types.InlineKeyboardMarkup()
-
     buttons.add(types.InlineKeyboardButton(text="\U0001F4B4 Оплата", callback_data="pay"))
     buttons.add(types.InlineKeyboardButton(text="\U00002753 Связаться с поддержкой", callback_data="sup"))
-
     bot.send_message(message.chat.id, messages.trial_text,
                      reply_markup=buttons, parse_mode='Markdown')
 
@@ -364,9 +363,7 @@ def blog(message):
 
     time.sleep(1)
     buttons = types.InlineKeyboardMarkup()
-
     buttons.add(types.InlineKeyboardButton(text="Блог", url='https://market.zgc.su/zgcvpnblog'))
-
     bot.send_message(message.chat.id, "Узнайте как заблокировать рекламу, какие появились сервера и многое другое",
                      reply_markup=buttons)
 
@@ -377,11 +374,9 @@ def tm(message):
 
     time.sleep(1)
     buttons = types.InlineKeyboardMarkup()
-
     buttons.add(types.InlineKeyboardButton(text="Сайт обслуживания", url='tm.zgc.su'))
     buttons.add(types.InlineKeyboardButton(text="Как подключить?",
                                            url='https://sites.google.com/view/zgcvpn/try?authuser=0'))
-
     bot.send_message(message.chat.id, messages.turk, reply_markup=buttons)
 
 
@@ -391,9 +386,7 @@ def coop(message):
 
     time.sleep(1)
     buttons = types.InlineKeyboardMarkup()
-
     buttons.add(types.InlineKeyboardButton(text="Сделать предложение", url='https://zgcvpn.ru/partnership'))
-
     bot.send_message(message.chat.id, messages.coop, reply_markup=buttons)
 
 
@@ -403,10 +396,8 @@ def shop(message):
 
     time.sleep(1)
     buttons = types.InlineKeyboardMarkup()
-
     buttons.add(types.InlineKeyboardButton(text="\U0001F6D2 ZGC SHOP", url='https://market.zgc.su'))
     buttons.add(types.InlineKeyboardButton(text="\U00002753 Связаться с поддержкой", callback_data='market'))
-
     bot.send_message(message.chat.id, messages.shop, reply_markup=buttons)
 
 
@@ -423,26 +414,32 @@ def react(call):
 
     time.sleep(1)
     buttons = types.InlineKeyboardMarkup()
+    user_info = db_find_value('tg_id', call.message.chat.id)
 
     if call.data == "rub":
-        bot.send_message(call.message.chat.id, messages.rub_text, parse_mode='Markdown')
+        tariff_id = user_info['tariff']
+        msg = messages.rub_text
+
+        # If user has active tariff, send button allowing to extend his current tariff
+        # Temporarily off
+        if False and tariff_id in ['1', '2', '3', '22', '23']:
+            buttons.add(types.InlineKeyboardButton(text="Продлить текущий тариф", callback_data=f"Р-{tariff_id}"))
+            msg += f"\n\nВаш текущий тариф: {tariff_id}"
+            bot.send_message(call.message.chat.id, msg, parse_mode='Markdown', reply_markup=buttons)
+        else:
+            bot.send_message(call.message.chat.id, msg, parse_mode='Markdown')
 
     elif call.data == "yuan":
         bot.send_message(call.message.chat.id, messages.yuan_text, parse_mode='Markdown')
-
     elif call.data == "install":
         bot.send_message(call.message.chat.id, messages.first_install)
-
     elif call.data == "other":
         bot.send_message(call.message.chat.id, messages.support, parse_mode='Markdown')
-
     elif call.data == "market":
         open_dialogue("tg_id", call.message.chat.id)
         bot.send_message(call.message.chat.id, 'Здравствуйте! Укажите, пожалуйста, продукт и вопросы по нему')
-
     elif call.data == "urgent":
         support(call.message, urgent=True)
-
     elif call.data == "sup":
         support(call.message)
 
@@ -450,14 +447,12 @@ def react(call):
     elif call.data == "get_better":
         update_clients(["tg_id", call.message.chat.id],
                        ["state", "ONE MESSAGE"], ["review_time", f"{int(time.time())}"])
-
         bot.send_message(call.message.chat.id, messages.get_better)
 
     elif call.data == "pay":
         buttons.add(types.InlineKeyboardButton(text="В рублях или в гривнах", callback_data="rub"))
         buttons.add(types.InlineKeyboardButton(text="В юанях", callback_data="yuan"))
         buttons.add(types.InlineKeyboardButton(text="\U00002753 Связаться с поддержкой", callback_data="sup"))
-
         bot.send_message(call.message.chat.id, messages.pay_type, reply_markup=buttons)
 
     elif call.data in ["1", "2", "3", "4", "5"]:
@@ -472,12 +467,10 @@ def react(call):
         # Ask user to make review if he gave the highest rate
         if rating == "5":
             buttons.add(types.InlineKeyboardButton(text="\U0001F49B Оставить отзыв", url=config.review_link))
-
             bot.send_message(call.message.chat.id, "Если вам понравился наш сервис - оставьте отзыв, "
                                                    "и мы предоставим вам 10 дней бесплатного VPN!\n\n"
                                                    "_Когда оставите отзыв свяжитесь с нами для получения бонуса_",
                              reply_markup=buttons, parse_mode='Markdown')
-
         # Ask user to write feedback
         else:
             buttons.add(types.InlineKeyboardButton(text="\U0001F4A1 Оставить пожелание", callback_data="get_better"))
@@ -486,6 +479,42 @@ def react(call):
         bot.send_message(config.group_id, f"Клиент `{call.message.chat.id}` поставил вам {rating}",
                          parse_mode='Markdown')
         update_clients(["tg_id", call.message.chat.id], ["rate", rating])
+
+    # User chose tariff he wants to buy, send him buttons to choose tariff duration in days (ascending order)
+    # Temporarily off
+    elif False and re.fullmatch(r'[РЮ]-[123]+', call.data):
+        currency, tariff_id = call.data.split('-')
+        tariffs_list = get_tariffs(['tariff', tariff_id], ['currency', currency])
+        for price, tariff_id, days, currency, desc in sorted(tariffs_list, key=lambda x: int(x[2])):
+            # Telegram does not support prices lower than 60 rub.
+            if int(price) < 60:
+                continue
+            # Choose correct form of 'день' word
+            if days[-1] == '1':
+                day_word = 'день'
+            elif days[-1] in '234':
+                day_word = 'дня'
+            else:
+                day_word = 'дней'
+            buttons.add(types.InlineKeyboardButton(text=f"{days} {day_word}",
+                                                   callback_data=f"{currency}-{tariff_id}-{days}"))
+        bot.send_message(call.message.chat.id, f"Выберите, на сколько дней вы хотите продлить тариф {tariff_id}",
+                         reply_markup=buttons)
+
+    # User chose tariff duration in days, send him payment button
+    # Temporarily off
+    elif False and re.fullmatch(r'[РЮ]-[123]+-[0-9]+', call.data):
+        currency, tariff_id, days = call.data.split('-')
+        specific_tariff = get_tariffs(['tariff', tariff_id], ['currency', currency], ['days', days])[0]
+        price = int(specific_tariff[0])
+        prices = [types.LabeledPrice(label=f'Тариф {tariff_id} на {days} дней', amount=price * 100)]
+        bot.send_invoice(call.message.chat.id, title=f"Тариф {tariff_id}",
+                         description='Plati',
+                         provider_token=config.pay_token,
+                         currency='rub',
+                         prices=prices,
+                         start_parameter='payment',
+                         invoice_payload='HAPPY FRIDAYS COUPON')
 
 
 @bot.message_handler(func=check_mailing,
@@ -644,7 +673,6 @@ def mail_edit(message):
         elif message.text.lower() == "нет":
             bot.send_message(message.chat.id, "Замена почты отменена")
             temp['wrong_email'], temp['true_email'] = "", ""
-
         else:
             bot.send_message(message.chat.id, "Не понял, повторите")
 
@@ -681,18 +709,15 @@ def support_group(message):
             # Close dialogue
             if message.text and message.text.lower() in ["пока", "/пока", "off", "конец", "/q"]:
                 close_dialogue("tg_id", tg_id)
-
             # Close payment dialogue
             elif message.text and message.text.lower() in ["/оплата", "оп"]:
                 close_dialogue("tg_id", tg_id, pay=True)
-
             # Close dialogue silently
             elif message.text and message.text.lower() == "/закрыть":
                 close_dialogue("tg_id", tg_id, silent=True)
-
             # Check if message was forwarded by bot, not by other user
             elif message.reply_to_message.from_user.id == config.bot_id:
-                tg_to_tg(tg_id, message, from_support=True)  # Finally, send answer to client :)
+                copy_send_message(tg_id, message.chat.id, message.message_id) # Finally, send answer to client :)
                 open_dialogue("tg_id", tg_id)
 
         # Reply object message was forwarded from VK
@@ -701,13 +726,10 @@ def support_group(message):
 
             if message.text and message.text.lower() in ["пока", "off", "конец", "/q"]:
                 close_dialogue("vk_id", vk_id)
-
             elif message.text and message.text.lower() in ["/оплата", "оп"]:
                 close_dialogue("vk_id", vk_id, pay=True)
-
             elif message.text and message.text.lower() == "/закрыть":
                 close_dialogue("vk_id", vk_id, silent=True)
-
             else:
                 tg_to_vk(message, vk_id)
                 open_dialogue("vk_id", vk_id)
@@ -718,13 +740,10 @@ def support_group(message):
 
             if message.text and message.text.lower() in ["пока", "/пока", "off", "конец", "/q"]:
                 close_dialogue("fb_id", fb_id)
-
             elif message.text and message.text.lower() in ["/оплата", "оп"]:
                 close_dialogue("fb_id", fb_id, pay=True)
-
             elif message.text and message.text.lower() == "/закрыть":
                 close_dialogue("fb_id", fb_id, silent=True)
-
             else:
                 tg_to_fb(message, fb_id)
 
@@ -789,6 +808,9 @@ def forward_to_support(message):
     user_info = db_find_value("tg_id", message.chat.id)
     user_state = user_info['state']
 
+    # transfer client's message to support group
+    tg_to_tg(config.group_id, message)
+
     # Client sent a message after being reminded about the payment, open dialogue
     if user_state == "REMINDED":
         open_dialogue("tg_id", message.chat.id, state="PAY")
@@ -801,9 +823,6 @@ def forward_to_support(message):
         if message.photo:
             filename = save_file(message, folder=config.pay_imgs_path, check=True)
             autopay(message.chat.id, 'tg_id', filename)
-
-    # transfer client's message to support group
-    tg_to_tg(config.group_id, message)
 
     # Notify client that his message was received (once per dialogue)
     if user_info['received'] == "NO":

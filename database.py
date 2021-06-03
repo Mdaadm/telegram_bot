@@ -14,7 +14,8 @@ def update_db():
 
     # Get current tariffs info
     fin_acc = gc.open_by_key(config.sheets_fin_token).worksheet('Тарифы')
-    tariffs_info = [row[:4] for row in fin_acc.get_all_values()[1:]]
+    tariffs_info = [row[:5] for row in fin_acc.get_all_values()[1:]]
+    time.sleep(1)
 
     # Get all actual clients info
     acc = gc.open_by_key(config.sheets_clients_token).worksheet('v2clients')
@@ -29,7 +30,7 @@ def update_db():
 
         # update tariffs info
         cur.execute(f"DELETE FROM tariffs")
-        cur.executemany(f"INSERT INTO tariffs VALUES (?,?,?,?);", tariffs_info)
+        cur.executemany(f"INSERT INTO tariffs VALUES (?,?,?,?,?);", tariffs_info)
 
         # update clients info
         cur.execute("SELECT * FROM clients")
@@ -39,11 +40,11 @@ def update_db():
 
         # Check for every client from google sheets
         for i, address in enumerate(email):
-            client = (address, date[i], tariff[i], sub[i], 0, 0, 0, "CLOSED", "0", "0", "NO", 0)
+            client = (address, date[i], tariff[i], sub[i], 0, 0, 0, "CLOSED", "0", "0", "NO", 0, 0)
 
             # Insert new row
             if address not in db_emails:
-                cur.execute("INSERT INTO clients VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", client)
+                cur.execute(f"INSERT INTO clients VALUES ({','.join(['?' for _ in client])})", client)
                 print(f"New client: {client[:3]}")
 
             # Update existing row
@@ -148,5 +149,6 @@ def main():
 
         except Exception as e:
             print("DB error, restarting")
+            print(e)
             log_report("DB", e)
             time.sleep(3)

@@ -169,13 +169,13 @@ def update_pinned_top():
     """ Update upper part of pinned message that contains IDs of clients with open dialogues """
 
     # Pinned message text is stored in file
-    with open("pinned.txt", "r+", encoding='utf-8') as file:
+    with open(config.pinned_msg_path, "r+", encoding='utf-8') as file:
         op = get_open_dialogues()
         top = "\U0001F5E3 Открытые диалоги:\n" + "\n".join(op)
         bottom = file.read().split("==========")[1]
         new_full = top + "\n==========" + bottom
 
-    with open("pinned.txt", "w", encoding='utf-8') as file:
+    with open(config.pinned_msg_path, "w", encoding='utf-8') as file:
         file.write(new_full)
 
     try:
@@ -189,12 +189,12 @@ def update_pinned_bottom(emails_list):
     """ Update bottom part of pinned message that contains emails of clients who were reminded about expiring tariff """
 
     # Pinned message text is stored in file
-    with open("pinned.txt", "r+") as file:
+    with open(config.pinned_msg_path, "r+") as file:
         top = file.read().split("==========")[0]
         bottom = emails_list
         new_full = top + "==========\n" + bottom
 
-    with open("pinned.txt", "w") as file:
+    with open(config.pinned_msg_path, "w") as file:
         file.write(new_full)
 
     bot.edit_message_text(new_full, config.group_id, config.pinned_msg, parse_mode='HTML')
@@ -326,15 +326,19 @@ def close_dialogue(type_id, id, pay=False, silent=False, notify_admin_group=True
 
 
 # --------------------------------------------------
-def get_current_tariffs():
-    """ Get 2D-list with every tariff info """
+def get_tariffs(*condition_pairs):
+    """ Get list of tariffs by their price by condition pairs
+        condition_pairs args must be [DB column name, value] pairs """
 
     with sql.connect(config.db_file) as con:
         cur = con.cursor()
-        cur.execute(f"SELECT * FROM tariffs")
+        # condition string example: "tariff = '2' AND currency = 'Ю'"
+        condition = " AND ".join([f"{i[0]} = '{i[1]}'" for i in condition_pairs])
+        condition = "WHERE " + condition if condition else ''
+        cur.execute(f"SELECT * FROM tariffs {condition}")
         result = cur.fetchall()
 
-        return result
+    return result
 
 
 # --------------------------------------------------
@@ -365,17 +369,20 @@ def autopay(user_id, type_id, file, is_url=False):
 def process_payment(parsed_text, user_id, type_id):
     """ Search for numbers that correspond to the current tariffs, consider it as payment if found """
 
-    time.sleep(1)
-    no_space_text = ''.join(parsed_text.split())
-    tariffs_dict = {i[0]: i[1:] for i in get_current_tariffs()}
+    # Make dict containing all tariffs using price as key
+    tariffs_dict = {
+        t[0]: {'tariff_id': t[1], 'days': t[2], 'currency': t[3], 'description': t[4]}
+        for t in get_tariffs()
+    }
 
     # Find all matches for the "digits with or without dot or comma" pattern, for example "239,00", "1990"
+    no_space_text = ''.join(parsed_text.split())
     for match in re.findall(r'[0-9]+[.,]?[0-9]*', no_space_text):
 
-        # Tariffs are in roubles, so convert yuan to roubles, simply multiplying by 10
+        # All tariffs prices are in roubles, so convert yuan to roubles, simply multiplying by 10
         if '.' in match or ',' in match:
             left_part = re.split(r'[,.]', match)[0]
-            amount = str(int(left_part * 10))
+            amount = str(int(left_part) * 10)
         else:
             amount = match
 
@@ -390,7 +397,7 @@ def process_payment(parsed_text, user_id, type_id):
                 email = get_info('email', type_id, user_id)
                 close_dialogue(type_id, user_id, pay=True, notify_admin_group=False)
 
-            tariff, days, description = tariffs_dict[amount]
+            tariff, days, _, _ = tariffs_dict[amount].values()
             write_payment(email, amount)
             msg = f'\U0001F5F3 #автоплатеж\n_Email_: {email}\n_Сумма_: {amount}\n_Тариф_: {tariff}\n_Дней_: {days}'
             bot.send_message(config.group_id, msg, parse_mode='Markdown')
