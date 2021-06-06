@@ -30,22 +30,6 @@ fb_bot = Bot(config.fb_access_token)
 gc = gspread.service_account(filename=config.cred_final)
 
 
-def send_msg_to_tg(message_data):
-    bot.send_message(config.group_id, message_data)
-
-
-def get_email_from_message(message):
-    lines = message.split('\n')
-    email = ""
-
-    for line in lines:
-        if line.startswith("email:"):
-            email = line.split(":")[1].strip()
-            break
-
-    return email
-
-
 # --------------------------------------------------
 def vk_send_message(user_id, message, keyboard=None):
     """ Send message to VK user """
@@ -375,16 +359,25 @@ def process_payment(parsed_text, user_id, type_id):
         for t in get_tariffs()
     }
 
-    # Find all matches for the "digits with or without dot or comma" pattern, for example "239,00", "1990"
-    no_space_text = ''.join(parsed_text.split())
-    for match in re.findall(r'[0-9]+[.,]?[0-9]*', no_space_text):
+    # Remove spaces from each line, useful for lines like '1 990 P'
+    for line in parsed_text.split('\n'):
+        no_space_line = ''.join(line.split())
+
+        # This regex matches lines like '-1990P', '59,00', 'Y29.00'
+        # OCR interprets yuan symbol ¥ as Y and rouble symbol ₽ as P
+        match = re.fullmatch(r'[-Y]*([0-9]+[.,]?[0-9]+)[P]?', no_space_line)
+        if not match:
+            continue
+
+        # Extract from match substring with digits/dot/comma only
+        number = match.group(1)
 
         # All tariffs prices are in roubles, so convert yuan to roubles, simply multiplying by 10
-        if '.' in match or ',' in match:
-            left_part = re.split(r'[,.]', match)[0]
+        if '.' in number or ',' in number:
+            left_part = re.split(r'[,.]', number)[0]
             amount = str(int(left_part) * 10)
         else:
-            amount = match
+            amount = number
 
         if amount == '0':
             continue

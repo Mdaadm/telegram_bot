@@ -233,7 +233,7 @@ def vk_message_handler(event):
         forward_vk_to_tg(event, user_state=user_state)
 
         # Notify user that we received his message (once per dialogue)
-        if user_info['received']:
+        if user_info['received'] == 'NO':
             vk_send_message(user_id, "Ваше сообщение передано в поддержку. "
                                      "Мы постараемся ответить как можно быстрее!", reply_keyboard())
             update_clients(["vk_id", user_id], ["received", "YES"])

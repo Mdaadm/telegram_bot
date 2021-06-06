@@ -280,13 +280,6 @@ def initial_buttons(message, send_text=messages.buttons_menu):
     bot.send_message(message.chat.id, send_text, reply_markup=markup_buttons)
 
 
-@bot.message_handler(func=lambda message: message.chat.id == 197898957)
-def cow(message):
-    """ Korova """
-
-    bot.send_audio(message.chat.id, "CQACAgIAAxkBAALKP1-5Lbsw_SWny8UT3NIbArp_mlZcAAJPCAACqgABwUl8U_s6W_nHxB4E")
-
-
 @bot.message_handler(commands=["start"])
 def start(message):
     """ Ask user to send his email address if not identified. Otherwise send default message with reply keyboard """
